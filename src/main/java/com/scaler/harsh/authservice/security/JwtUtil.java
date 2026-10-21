@@ -35,7 +35,11 @@ public class JwtUtil {
                 .claim("email", email)
                 .issuedAt(now)
                 .expiration(expiry)
-                .signWith(key)
+                // Pin HS256 explicitly. signWith(key) alone lets jjwt auto-pick the strongest HMAC
+                // variant the key's byte length supports — our secret is long enough that it silently
+                // picked HS384, which doesn't match Kong's jwt_secrets[].algorithm: HS256 and gets
+                // rejected with "Invalid algorithm".
+                .signWith(key, Jwts.SIG.HS256)
                 .compact();
     }
 }
