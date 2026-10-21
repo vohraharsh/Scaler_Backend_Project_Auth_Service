@@ -37,4 +37,12 @@ public class FakeStoreAuthService implements AuthService {
 
         return response;
     }
+
+    // Dormant fallback — not @Primary, never wired at runtime (SelfAuthService is). Still must
+    // satisfy the interface at compile time, same pattern as the payment-receipt gap fix's
+    // FakePaymentService stub. FakeStoreAPI has no logout concept, so there's nothing real to do.
+    @Override
+    public void logout(String authorizationHeader) {
+        throw new UnsupportedOperationException("FakeStoreAuthService does not support logout");
+    }
 }

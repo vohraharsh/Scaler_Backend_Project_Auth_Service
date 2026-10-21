@@ -5,8 +5,10 @@ import com.scaler.harsh.authservice.dto.LoginResponseDTO;
 import com.scaler.harsh.authservice.exceptions.ServiceException;
 import com.scaler.harsh.authservice.service.AuthService;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -27,5 +29,11 @@ public class AuthController {
             throw new ServiceException("Password cannot be empty", HttpStatus.BAD_REQUEST);
         }
         return svc.login(request);
+    }
+
+    @PostMapping("/auth/logout")
+    public ResponseEntity<Void> logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        svc.logout(authorization);
+        return ResponseEntity.noContent().build();
     }
 }

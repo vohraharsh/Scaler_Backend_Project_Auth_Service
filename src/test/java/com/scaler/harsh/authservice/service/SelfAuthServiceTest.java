@@ -6,17 +6,24 @@ import com.scaler.harsh.authservice.dto.UserVerifyResponseDTO;
 import com.scaler.harsh.authservice.dto.VerifyCredentialsRequestDTO;
 import com.scaler.harsh.authservice.exceptions.ServiceException;
 import com.scaler.harsh.authservice.security.JwtUtil;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.MalformedJwtException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
+
+import java.time.Duration;
+import java.util.Date;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -27,6 +34,7 @@ import static org.mockito.Mockito.*;
 class SelfAuthServiceTest {
 
     private static final String VERIFY_URL = "http://localhost:8081/users/verify-credentials";
+    private static final String REVOKED_TOKEN_PREFIX = "revoked-token:";
 
     @Mock
     private RestTemplate restTemplate;
@@ -34,11 +42,20 @@ class SelfAuthServiceTest {
     @Mock
     private JwtUtil jwtUtil;
 
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOperations;
+
     private SelfAuthService selfAuthService;
 
     @BeforeEach
     void setUp() {
-        selfAuthService = new SelfAuthService(restTemplate, jwtUtil);
+        selfAuthService = new SelfAuthService(restTemplate, jwtUtil, redisTemplate);
+        // Only the logout tests actually call opsForValue(); stubbing it here instead of per-test
+        // keeps those tests shorter. Harmless for the login tests, which never touch redisTemplate.
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     private LoginRequestDTO loginRequest(String username, String password) {
@@ -122,5 +139,56 @@ class SelfAuthServiceTest {
         assertEquals(HttpStatus.UNAUTHORIZED, ex.getStatus());
         assertEquals("Invalid username or password", ex.getMessage());
         verifyNoInteractions(jwtUtil);
+    }
+
+    // ---------- logout (gap #4) ----------
+
+    @Test
+    void logout_missingHeader_throws400() {
+        ServiceException ex = assertThrows(ServiceException.class, () -> selfAuthService.logout(null));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verifyNoInteractions(jwtUtil);
+        verifyNoInteractions(redisTemplate);
+    }
+
+    @Test
+    void logout_headerWithoutBearerPrefix_throws400() {
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> selfAuthService.logout("sometoken"));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatus());
+        verifyNoInteractions(jwtUtil);
+    }
+
+    @Test
+    void logout_validToken_storesInRedisWithRemainingTtl() {
+        when(jwtUtil.getExpiration("good.jwt.token"))
+                .thenReturn(new Date(System.currentTimeMillis() + 60_000));
+
+        selfAuthService.logout("Bearer good.jwt.token");
+
+        ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
+        verify(valueOperations).set(eq(REVOKED_TOKEN_PREFIX + "good.jwt.token"), eq("1"), ttlCaptor.capture());
+        // Allow a little slack for real clock time elapsing between stubbing and assertion.
+        assertTrue(ttlCaptor.getValue().toMillis() > 55_000 && ttlCaptor.getValue().toMillis() <= 60_000);
+    }
+
+    @Test
+    void logout_alreadyExpiredToken_noOp_doesNotTouchRedis() {
+        when(jwtUtil.getExpiration("expired.jwt.token")).thenThrow(
+                new ExpiredJwtException(null, null, "expired"));
+
+        assertDoesNotThrow(() -> selfAuthService.logout("Bearer expired.jwt.token"));
+        verifyNoInteractions(redisTemplate);
+    }
+
+    @Test
+    void logout_malformedToken_throws401_doesNotTouchRedis() {
+        when(jwtUtil.getExpiration("not-a-real-jwt")).thenThrow(
+                new MalformedJwtException("malformed"));
+
+        ServiceException ex = assertThrows(ServiceException.class,
+                () -> selfAuthService.logout("Bearer not-a-real-jwt"));
+        assertEquals(HttpStatus.UNAUTHORIZED, ex.getStatus());
+        verifyNoInteractions(redisTemplate);
     }
 }

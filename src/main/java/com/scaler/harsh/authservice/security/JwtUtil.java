@@ -1,5 +1,6 @@
 package com.scaler.harsh.authservice.security;
 
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,5 +42,16 @@ public class JwtUtil {
                 // rejected with "Invalid algorithm".
                 .signWith(key, Jwts.SIG.HS256)
                 .compact();
+    }
+
+    // Gap #4 (logout): parses and verifies a token's signature, then returns its expiration so
+    // the caller can compute how long to keep it in the Redis revocation blocklist. Throws
+    // ExpiredJwtException if the token is already expired (jjwt validates exp during parsing,
+    // before this method can return), and JwtException/IllegalArgumentException for a malformed
+    // or invalid-signature token — same exception contract as the per-service JwtAuthFilter's
+    // own verification, so callers can reuse the same catch logic.
+    public Date getExpiration(String token) {
+        Claims claims = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
+        return claims.getExpiration();
     }
 }
