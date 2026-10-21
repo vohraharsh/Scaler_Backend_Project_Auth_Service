@@ -26,6 +26,10 @@ public class JwtUtil {
         Date expiry = new Date(now.getTime() + expirationMs);
 
         return Jwts.builder()
+                // Must match a consumer's jwt_secrets[].key in Kong's kong.yml — Kong's jwt plugin
+                // looks up which consumer's secret to verify against by this claim (key_claim_name
+                // defaults to "iss").
+                .issuer("ecommerce-auth-service")
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .claim("email", email)
